@@ -39,6 +39,7 @@ type
     Discriminator
     CliSwitch
     Arg
+    RestOfArgs
 
   OptInfo = ref object
     name, abbr, desc, typename: string
@@ -401,7 +402,7 @@ proc showHelp(help: var string,
 
 func getNextArgIdx(cmd: CmdInfo, consumedArgIdx: int): int =
   for i in 0 ..< cmd.opts.len:
-    if cmd.opts[i].kind == Arg and cmd.opts[i].idx > consumedArgIdx:
+    if cmd.opts[i].kind == Arg or cmd.opts[i].kind == RestOfArgs and cmd.opts[i].idx > consumedArgIdx:
       return cmd.opts[i].idx
 
   -1
@@ -425,9 +426,24 @@ func findOpt(opts: openArray[OptInfo], name: string): OptInfo =
        cmpIgnoreStyle(opt.abbr, name) == 0:
       return opt
 
+# returns the rest of args option if present.
+# if it isn't on the last position, then this is misconfiguration and exception is thrown
+# TODO the check if the rest of args is on the last position should happen compile time
+func findRestOfArgs(opts: openArray[OptInfo]): OptInfo {.raises: [ConfigurationError].} =
+  for i in 0..<opts.len:
+    if opts[i].kind == RestOfArgs:
+      if i != opts.len - 1:
+        raise newException(ConfigurationError, "option of type restOfArgs must be the last option in the subcommand section")
+      return opts[i]
+
 func findOpt(activeCmds: openArray[CmdInfo], name: string): OptInfo =
   for i in countdown(activeCmds.len - 1, 0):
     let found = findOpt(activeCmds[i].opts, name)
+    if found != nil: return found
+
+func findRestOfArgs(activeCmds: openArray[CmdInfo]): OptInfo {.raises: [ConfigurationError].} =
+  for i in countdown(activeCmds.len - 1, 0):
+    let found = findRestOfArgs(activeCmds[i].opts)
     if found != nil: return found
 
 func findCmd(cmds: openArray[CmdInfo], name: string): CmdInfo =
@@ -769,6 +785,7 @@ proc cmdInfoFromType(T: NimNode): CmdInfo =
       desc = field.readPragma"desc"
       optKind = if field.isDiscriminator: Discriminator
                 elif field.readPragma("argument") != nil: Arg
+                elif field.readPragma("restOfArgs") != nil: RestOfArgs
                 else: CliSwitch
 
     var opt = OptInfo(kind: optKind,
@@ -908,7 +925,6 @@ proc loadImpl[C, SecondarySources](
 
   # This is an initial naive implementation that will be improved
   # over time.
-
   let (rootCmd, fieldSetters) = configurationRtti(Configuration)
   var fieldCounters: array[fieldSetters.len, int]
 
@@ -941,6 +957,7 @@ proc loadImpl[C, SecondarySources](
       {.push warning[BareExcept]:off.}
 
     try:
+      echo "apply value", cmdLineVal, " to argument ",fieldSetters[setterIdx][0]
       fieldSetters[setterIdx][1](confAddr[], some(cmdLineVal))
       inc fieldCounters[setterIdx]
     except:
@@ -1083,10 +1100,12 @@ proc loadImpl[C, SecondarySources](
   for kind, key, val in getopt(cmdLine):
     when key isnot string:
       let key = string(key)
+
     case kind
     of cmdLongOption, cmdShortOption:
       processHelpAndVersionOptions key
 
+      echo "processing cli switch ", key, " with val ", val
       var opt = findOpt(activeCmds, key)
       if opt == nil:
         # We didn't find the option.
@@ -1101,12 +1120,27 @@ proc loadImpl[C, SecondarySources](
           else:
             discard
 
+      # try adding the option to rest of arguments, if provided
+      if opt == nil:
+        opt = findRestOfArgs(activeCmds)
+        # if we've parsed all available cmd params with kind Arg or RestOfArgs (the next argument index is -1)
+        # then this CLI switch is to be added to rest of args
+        # otherwise it's an unrecognized option
+        if opt != nil and lastCmd.getNextArgIdx(nextArgIdx) == -1:
+          # we add the key to rest of args as well
+          # add prefixes to the key based on whether it's a long switch or not
+          if kind == cmdLongOption:
+            applySetter(opt.idx, "--" & key)
+          else:
+            applySetter(opt.idx, "-" & key)
+
       if opt != nil:
         applySetter(opt.idx, val)
       else:
         fail "Unrecognized option '$1'" % [key]
 
     of cmdArgument:
+      echo "process cmd option ", key
       if lastCmd.hasSubCommands:
         processHelpAndVersionOptions key
 
@@ -1115,6 +1149,7 @@ proc loadImpl[C, SecondarySources](
         if subCmdDiscriminator != nil:
           let subCmd = findCmd(subCmdDiscriminator.subCmds, key)
           if subCmd != nil:
+            echo "cmd is ", key
             activateCmd(subCmdDiscriminator, subCmd)
             break processArg
 

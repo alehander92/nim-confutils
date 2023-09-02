@@ -52,6 +52,7 @@ template defaultValueDesc*(v: string) {.pragma.}
 template required* {.pragma.}
 template command* {.pragma.}
 template argument* {.pragma.}
+template restOfArgs* {.pragma.}
 template hidden* {.pragma.}
 template ignore* {.pragma.}
 template inlineConfiguration* {.pragma.}
