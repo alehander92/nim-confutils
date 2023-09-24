@@ -957,7 +957,7 @@ proc loadImpl[C, SecondarySources](
       {.push warning[BareExcept]:off.}
 
     try:
-      echo "apply value", cmdLineVal, " to argument ",fieldSetters[setterIdx][0]
+      echo "apply value ", cmdLineVal, " to argument ",fieldSetters[setterIdx][0]
       fieldSetters[setterIdx][1](confAddr[], some(cmdLineVal))
       inc fieldCounters[setterIdx]
     except:
@@ -1097,7 +1097,11 @@ proc loadImpl[C, SecondarySources](
       help.helpOutput version, "\p"
       flushOutputAndQuit QuitSuccess
 
-  for kind, key, val in getopt(cmdLine):
+  # we explicitly provide longNoVal to be nonempty to allow "--option value" syntax
+  # in addition to "--option=value" and "--option:value"
+  # we need to alter the implementation of short options, because "-o value" doesn't work
+  # even if shortNoVal is non-empty
+  for kind, key, val in getopt(cmdLine, shortNoVal = {}, longNoVal = @[" "]):
     when key isnot string:
       let key = string(key)
 
