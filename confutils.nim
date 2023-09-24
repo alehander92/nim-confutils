@@ -427,13 +427,15 @@ func findOpt(opts: openArray[OptInfo], name: string): OptInfo =
       return opt
 
 # returns the rest of args option if present.
-# if it isn't on the last position, then this is misconfiguration and exception is thrown
+# if it isn't on the last position or it's type is not seq[string]
+# then this is misconfiguration and exception is thrown
 # TODO the check if the rest of args is on the last position should happen compile time
 func findRestOfArgs(opts: openArray[OptInfo]): OptInfo {.raises: [ConfigurationError].} =
   for i in 0..<opts.len:
     if opts[i].kind == RestOfArgs:
-      if i != opts.len - 1:
-        raise newException(ConfigurationError, "option of type restOfArgs must be the last option in the subcommand section")
+      if i != opts.len - 1 or opts[i].typename != "seq[string]":
+        raise newException(ConfigurationError, "option with name " & opts[i].name &
+                                              " of type restOfArgs must be the last option in the subcommand section and be of type seq[string]")
       return opts[i]
 
 func findOpt(activeCmds: openArray[CmdInfo], name: string): OptInfo =
