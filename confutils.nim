@@ -1099,9 +1099,8 @@ proc loadImpl[C, SecondarySources](
 
   # we explicitly provide longNoVal to be nonempty to allow "--option value" syntax
   # in addition to "--option=value" and "--option:value"
-  # we need to alter the implementation of short options, because "-o value" doesn't work
-  # even if shortNoVal is non-empty
-  for kind, key, val in getopt(cmdLine, shortNoVal = {}, longNoVal = @[" "]):
+  # same with shortNoVal and "-o value" syntax
+  for kind, key, val in getopt(cmdLine, shortNoVal = {' '}, longNoVal = @[" "]):
     when key isnot string:
       let key = string(key)
 
