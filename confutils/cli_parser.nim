@@ -61,17 +61,24 @@ func handleShortOption(p: var OptParser; cmd: string) =
   while i < cmd.len and cmd[i] in {'\t', ' '}:
     inc(i)
     p.inShortState = false
-  if i < cmd.len and cmd[i] in {':', '='} or
-      card(p.shortNoVal) > 0 and p.key[0] notin p.shortNoVal:
-    if i < cmd.len and cmd[i] in {':', '='}:
+  if i < cmd.len:
+    if cmd[i] in {':', '='}:
       inc(i)
-    p.inShortState = false
-    while i < cmd.len and cmd[i] in {'\t', ' '}: inc(i)
-    p.val = substr(cmd, i)
-    p.pos = 0
-    inc p.idx
-  else:
-    p.pos = i
+      p.inShortState = false
+      while i < cmd.len and cmd[i] in {'\t', ' '}: inc(i)
+      p.val = substr(cmd, i)
+      p.pos = 0
+      inc p.idx
+    else:
+      p.pos = i
+  elif card(p.shortNoVal) > 0 and p.key[0] notin p.shortNoVal:
+    # we use the next argument as the value
+    if p.idx < p.cmds.len - 1 and p.cmds[p.idx+1][0] != '-':
+      p.val = p.cmds[p.idx+1]
+      inc p.idx
+    else:
+      p.val = ""
+
   if i >= cmd.len:
     p.inShortState = false
     p.pos = 0
@@ -108,6 +115,7 @@ func next*(p: var OptParser) =
     if i < p.cmds[p.idx].len and p.cmds[p.idx][i] == '-':
       p.kind = cmdLongOption
       inc(i)
+      # parse the key:
       i = parseWord(p.cmds[p.idx], i, p.key, {' ', '\t', ':', '='})
       while i < p.cmds[p.idx].len and p.cmds[p.idx][i] in {'\t', ' '}: inc(i)
       if i < p.cmds[p.idx].len and p.cmds[p.idx][i] in {':', '='}:
