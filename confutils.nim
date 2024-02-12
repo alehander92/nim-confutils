@@ -33,6 +33,7 @@ type
     name: string
     desc: string
     isHidden: bool
+    hasRestOfArgs: bool
     opts: seq[OptInfo]
 
   OptKind = enum
@@ -55,6 +56,8 @@ type
       isImplicitlySelectable: bool
       subCmds: seq[CmdInfo]
       defaultSubCmd: int
+    of RestOfArgs:
+      requiredArgsCount: int
     else:
       discard
 
@@ -402,7 +405,7 @@ proc showHelp(help: var string,
 
 func getNextArgIdx(cmd: CmdInfo, consumedArgIdx: int): int =
   for i in 0 ..< cmd.opts.len:
-    if cmd.opts[i].kind == Arg or cmd.opts[i].kind == RestOfArgs and cmd.opts[i].idx > consumedArgIdx:
+    if (cmd.opts[i].kind == Arg or cmd.opts[i].kind == RestOfArgs) and cmd.opts[i].idx > consumedArgIdx:
       return cmd.opts[i].idx
 
   -1
@@ -856,6 +859,18 @@ proc cmdInfoFromType(T: NimNode): CmdInfo =
       # the reason we check for `ignore` pragma here and not using `continue` statement
       # is we do respect option hierarchy of subcommands
       if field.readPragma("ignore") == nil:
+        if optKind == RestOfArgs:
+          for i, previousOpt in cmd.opts:
+            let isRequired = not previousOpt.hasDefault
+            let isRequiredArg = isRequired and previousOpt.kind == Arg
+            if not isRequiredArg:
+              error "not supported: non-required args before {.restOfArgs.}: " &
+                opt.name, field.name
+          cmd.hasRestOfArgs = true
+        elif cmd.hasRestOfArgs:
+          # arg or cli switch after rest: wrong
+          error "{.restOfArgs.} field can only be the last one in a command, but followed by: " &
+            field.name.repr, field.name
         cmd.opts.add opt
 
     else:
@@ -959,7 +974,7 @@ proc loadImpl[C, SecondarySources](
       {.push warning[BareExcept]:off.}
 
     try:
-      echo "apply value ", cmdLineVal, " to argument ",fieldSetters[setterIdx][0]
+      # echo "apply value ", cmdLineVal, " to argument ",fieldSetters[setterIdx][0]
       fieldSetters[setterIdx][1](confAddr[], some(cmdLineVal))
       inc fieldCounters[setterIdx]
     except:
@@ -1099,18 +1114,28 @@ proc loadImpl[C, SecondarySources](
       help.helpOutput version, "\p"
       flushOutputAndQuit QuitSuccess
 
-  # we explicitly provide longNoVal to be nonempty to allow "--option value" syntax
-  # in addition to "--option=value" and "--option:value"
-  # same with shortNoVal and "-o value" syntax
-  for kind, key, val in getopt(cmdLine, shortNoVal = {' '}, longNoVal = @[" "]):
+  var index = 0
+  for kind, key, val in getopt(cmdLine, shortNoVal = {}, longNoVal = @[]):
     when key isnot string:
       let key = string(key)
+
+    # echo activeCmds.len, " ", lastCmd.hasRestOfArgs, " ", index, " ", lastCmd.opts.len
+
+    if activeCmds.len > 0 and lastCmd.hasRestOfArgs and
+        index >= lastCmd.opts.len: # 1 (cmd) + lastCmd.opts.len - 1 (all before rest)
+      # add all others in the simplest way possible to the rest of args seq
+      # assume we're on param index(0-based): index + 1 in param index(starting from 1)
+      var restOfArgs: seq[string] = @[]
+      for i in index + 1 .. paramCount():
+        applySetter(lastCmd.opts[^1].idx, paramStr(i))
+      break
+    index += 1
 
     case kind
     of cmdLongOption, cmdShortOption:
       processHelpAndVersionOptions key
 
-      echo "processing cli switch ", key, " with val ", val
+      # echo "processing cli switch ", key, " with val ", val
       var opt = findOpt(activeCmds, key)
       if opt == nil:
         # We didn't find the option.
@@ -1125,27 +1150,13 @@ proc loadImpl[C, SecondarySources](
           else:
             discard
 
-      # try adding the option to rest of arguments, if provided
-      if opt == nil:
-        opt = findRestOfArgs(activeCmds)
-        # if we've parsed all available cmd params with kind Arg or RestOfArgs (the next argument index is -1)
-        # then this CLI switch is to be added to rest of args
-        # otherwise it's an unrecognized option
-        if opt != nil and lastCmd.getNextArgIdx(nextArgIdx) == -1:
-          # we add the key to rest of args as well
-          # add prefixes to the key based on whether it's a long switch or not
-          if kind == cmdLongOption:
-            applySetter(opt.idx, "--" & key)
-          else:
-            applySetter(opt.idx, "-" & key)
-
       if opt != nil:
         applySetter(opt.idx, val)
       else:
         fail "Unrecognized option '$1'" % [key]
 
     of cmdArgument:
-      echo "process cmd option ", key
+      # echo "process cmd option ", key
       if lastCmd.hasSubCommands:
         processHelpAndVersionOptions key
 
@@ -1154,7 +1165,7 @@ proc loadImpl[C, SecondarySources](
         if subCmdDiscriminator != nil:
           let subCmd = findCmd(subCmdDiscriminator.subCmds, key)
           if subCmd != nil:
-            echo "cmd is ", key
+            # echo "cmd is ", key
             activateCmd(subCmdDiscriminator, subCmd)
             break processArg
 
